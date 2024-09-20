@@ -36,7 +36,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		host += ":80"
 	}
 
-	// Устанавливаем соединение с целевым сервером
+	// Устанавливаем соединение с сервером
 	conn, err := net.Dial("tcp", host)
 	if err != nil {
 		http.Error(w, "Error connecting to host", http.StatusBadGateway)
@@ -72,7 +72,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Передаем ответ обратно клиенту
+	// Передаем ответ
 	for header, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(header, value)
