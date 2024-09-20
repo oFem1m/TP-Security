@@ -58,7 +58,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Убедитесь, что заголовок "Host" установлен корректно
+	// Убеждаемся, что заголовок "Host" установлен корректно
 	conn.Write([]byte(fmt.Sprintf("Host: %s\r\n", host)))
 
 	// Завершаем отправку заголовков
@@ -117,14 +117,14 @@ func handleRequestByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	// Прокси-сервер
+	// Прокси
 	go func() {
 		http.HandleFunc("/", handleProxy)
 		log.Println("Starting proxy server on :8080")
 		log.Fatal(http.ListenAndServe(":8080", nil))
 	}()
 
-	// Веб-API
+	// API
 	http.HandleFunc("/requests", handleRequests)
 	http.HandleFunc("/requests/", handleRequestByID)
 
