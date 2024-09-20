@@ -57,6 +57,11 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			conn.Write([]byte(fmt.Sprintf("%s: %s\r\n", header, value)))
 		}
 	}
+
+	// Убедитесь, что заголовок "Host" установлен корректно
+	conn.Write([]byte(fmt.Sprintf("Host: %s\r\n", uri.Host)))
+
+	// Завершаем отправку заголовков
 	conn.Write([]byte("\r\n"))
 
 	// Читаем ответ от сервера
