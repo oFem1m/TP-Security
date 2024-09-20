@@ -1,16 +1,22 @@
-FROM golang:1.22
+FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-COPY go.mod ./
-COPY go.sum ./
+COPY go.mod go.sum ./
+
 RUN go mod download
 
 COPY . .
 
-RUN go build -o /proxy-server
+RUN go build -o proxy-server
+
+FROM alpine:latest
+
+WORKDIR /root/
+
+COPY --from=builder /app/proxy-server .
 
 EXPOSE 8080
 EXPOSE 8000
 
-CMD ["/proxy-server"]
+CMD ["./proxy-server"]
