@@ -42,24 +42,30 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	// Отправляем ответ клиенту, что соединение установлено
 	clientConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
 
-	// Генерируем сертификат для хоста
+	// Генерация и загрузка сертификата для текущего хоста
 	certFile, keyFile, err := generateHostCertificate(host)
 	if err != nil {
 		log.Printf("Error generating host certificate: %v", err)
 		return
 	}
 
-	// Настраиваем TLS-сервер с динамически сгенерированным сертификатом
+	// Загрузка сертификата для TLS-сервера
 	tlsCert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		log.Printf("Error loading key pair: %v", err)
 		return
 	}
 
+	// Настраиваем TLS-соединение с клиентом
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{tlsCert}}
-	tlsListener := tls.Server(clientConn, tlsConfig)
+	tlsConn := tls.Server(clientConn, tlsConfig)
+	err = tlsConn.Handshake()
+	if err != nil {
+		log.Printf("TLS handshake failed: %v", err)
+		return
+	}
 
-	// Устанавливаем соединение с реальным сервером
+	// Устанавливаем соединение с удаленным сервером
 	remoteConn, err := net.Dial("tcp", host)
 	if err != nil {
 		log.Printf("Error connecting to remote host: %v", err)
@@ -68,8 +74,8 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	defer remoteConn.Close()
 
 	// Проксим данные между клиентом и сервером
-	go io.Copy(remoteConn, tlsListener)
-	io.Copy(tlsListener, remoteConn)
+	go io.Copy(remoteConn, tlsConn)
+	io.Copy(tlsConn, remoteConn)
 }
 
 // Обработка HTTP-запросов
