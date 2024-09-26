@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
@@ -15,49 +16,127 @@ import (
 var requests = make([]*http.Request, 0)
 var mutex = &sync.Mutex{}
 
-// Обработка HTTPS-запросов (CONNECT)
+func createServer() {
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: http.HandlerFunc(handleProxy),
+	}
+	fmt.Println("Сервер запущен и слушает на порту 8080")
+	err := server.ListenAndServe()
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
+func handleProxy(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Received request method: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
+	// Определяем, является ли запрос CONNECT (для HTTPS)
+	if r.Method == http.MethodConnect {
+		handleHTTPS(w, r) // Вызов функции для обработки HTTPS-запросов
+	} else {
+		handleHTTP(w, r) // Вызов функции для обработки HTTP-запросов
+	}
+}
+
+// Обработка HTTPS-запросов
 func handleHTTPS(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Handling HTTPS request: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
 	// Логируем запрос
 	mutex.Lock()
 	requests = append(requests, r)
 	mutex.Unlock()
 
+	// Извлекаем хост и порт из запроса CONNECT
 	host := r.Host
-	log.Printf("Handling HTTPS CONNECT request for host: %s", host)
+	if !strings.Contains(host, ":") {
+		host += ":443"
+	}
 
-	// Устанавливаем соединение с клиентом
+	// Сообщаем клиенту, что соединение установлено
+	w.WriteHeader(http.StatusOK)
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
 		return
 	}
+
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		http.Error(w, "Error hijacking connection", http.StatusServiceUnavailable)
 		return
 	}
 	defer clientConn.Close()
 
-	// Отправляем ответ клиенту, что соединение установлено
-	clientConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
-
-	// Устанавливаем TCP-соединение с целевым сервером
-	remoteConn, err := net.Dial("tcp", host)
+	// Генерируем сертификат для запрашиваемого хоста
+	certFile, keyFile, err := generateHostCertificate(r.Host)
 	if err != nil {
-		log.Printf("Error connecting to remote host: %v", err)
+		http.Error(w, "Failed to generate certificate", http.StatusInternalServerError)
 		return
 	}
-	defer remoteConn.Close()
 
-	// Проксим данные между клиентом и сервером
-	go io.Copy(remoteConn, clientConn) // Клиент -> Сервер
-	io.Copy(clientConn, remoteConn)    // Сервер -> Клиент
+	// Загрузка сертификата и ключа
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		http.Error(w, "Failed to load certificate", http.StatusInternalServerError)
+		return
+	}
+
+	// Создаем TLS-сервер с нашим сгенерированным сертификатом
+	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+	tlsConn := tls.Server(clientConn, tlsConfig)
+
+	// Устанавливаем TLS-соединение с клиентом
+	err = tlsConn.Handshake()
+	if err != nil {
+		log.Println("TLS Handshake error:", err)
+		return
+	}
+	defer tlsConn.Close()
+
+	// Читаем запрос клиента
+	req, err := http.ReadRequest(bufio.NewReader(tlsConn))
+	if err != nil {
+		log.Println("Failed to read request:", err)
+		return
+	}
+
+	// Модифицируем запрос перед отправкой на целевой сервер (пример)
+	req.Header.Set("User-Agent", "Modified-MITM-Proxy")
+
+	// Пересылаем измененный запрос на целевой сервер
+	destConn, err := tls.Dial("tcp", host, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		log.Println("Failed to connect to destination:", err)
+		return
+	}
+	defer destConn.Close()
+
+	err = req.Write(destConn)
+	if err != nil {
+		log.Println("Failed to forward request:", err)
+		return
+	}
+
+	// Читаем ответ от сервера
+	resp, err := http.ReadResponse(bufio.NewReader(destConn), req)
+	if err != nil {
+		log.Println("Failed to read response from destination:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Пересылаем ответ клиенту
+	err = resp.Write(tlsConn)
+	if err != nil {
+		log.Println("Failed to write response to client:", err)
+		return
+	}
 }
 
 // Обработка HTTP-запросов
 func handleHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Handling HTTP request: %s", r.URL.String())
 	// Логируем запрос
+	log.Printf("Handling HTTPS request: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
 	mutex.Lock()
 	requests = append(requests, r)
 	mutex.Unlock()
