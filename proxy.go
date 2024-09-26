@@ -68,6 +68,7 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error hijacking connection", http.StatusServiceUnavailable)
 		return
 	}
+	defer clientConn.Close()
 
 	// Отправляем клиенту сообщение о том, что соединение установлено
 	_, err = clientConn.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
@@ -82,32 +83,28 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 		log.Println("Failed to connect to destination:", err)
 		return
 	}
-	//defer serverConn.Close()
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128)) // Генерация случайного серийного номера
+	defer serverConn.Close()
+
+	// Генерация серийного номера для сертификата
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		fmt.Printf("Error generating serial number: %v\n", err)
-		return
-	}
-
-	// Генерируем и загружаем сертификат для хоста
-	log.Println("Хост перед генерации сертификата хоста:", host)
-	err = generateHostCertificate(host, serialNumber)
-	if err != nil {
-		log.Println("Failed to generate host certificate:", err)
 		return
 	}
 
 	certFile := fmt.Sprintf("certs/%s.crt", host)
 	certKey := fmt.Sprintf("certs/%s.key", host)
 
-	// Проверяем, существуют ли файлы сертификата и ключа
+	// Проверка существования файлов сертификата
 	if _, err := os.Stat(certFile); os.IsNotExist(err) {
 		log.Printf("Certificate file %s does not exist", certFile)
-		return
-	}
-	if _, err := os.Stat(certKey); os.IsNotExist(err) {
-		log.Printf("Key file %s does not exist", certKey)
-		return
+		// Генерация сертификата для хоста
+		log.Println("Generating host certificate:", host)
+		err = generateHostCertificate(host, serialNumber)
+		if err != nil {
+			log.Println("Failed to generate host certificate:", err)
+			return
+		}
 	}
 
 	// Загружаем сертификат и ключ
@@ -132,20 +129,18 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tlsClientConn.Close()
 
-	// Устанавливаем TLS-соединение с целевым сервером
+	// TLS-соединение с сервером
 	tlsServerConn := tls.Client(serverConn, &tls.Config{InsecureSkipVerify: true})
 	err = tlsServerConn.Handshake()
 	if err != nil {
 		log.Println("TLS handshake with server failed:", err)
 		return
 	}
+	defer tlsServerConn.Close()
 
 	// Проксирование данных между клиентом и сервером
 	go io.Copy(tlsServerConn, tlsClientConn)
 	io.Copy(tlsClientConn, tlsServerConn)
-
-	//defer clientConn.Close()
-	//defer tlsServerConn.Close()
 }
 
 // Обработка HTTP-запросов
@@ -199,7 +194,7 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Завершаем отправку заголовков
 	conn.Write([]byte("\r\n"))
 
-	// Копируем тело запроса (для POST, PUT, итд.)
+	// Копируем тело запроса (для POST, PUT и др.)
 	if r.Method == "POST" || r.Method == "PUT" {
 		io.Copy(conn, r.Body)
 	}
@@ -213,7 +208,7 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Передаем ответ
+	// Передаем ответ клиенту
 	for header, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(header, value)
@@ -222,5 +217,4 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
-	resp.Body.Close()
 }

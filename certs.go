@@ -55,6 +55,7 @@ func generateHostCertificate(hostname string, serialNumber *big.Int) error {
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
+		DNSNames:              []string{hostname}, // Добавляем SAN
 	}
 
 	// Подписываем сертификат корневым сертификатом (CA)
