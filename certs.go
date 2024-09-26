@@ -7,6 +7,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"math/big"
 	"os"
 	"time"
@@ -86,6 +87,6 @@ func generateHostCertificate(hostname string, serialNumber *big.Int) error {
 		return fmt.Errorf("error writing host certificate to file: %v", err)
 	}
 
-	fmt.Printf("Host certificate and key generated for %s and saved to %s.crt and %s.key\n", hostname, hostname, hostname)
+	log.Printf("Host certificate and key generated for %s and saved to %s.crt and %s.key\n", hostname, hostname, hostname)
 	return nil
 }

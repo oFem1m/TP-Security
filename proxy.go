@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 )
@@ -67,7 +68,6 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error hijacking connection", http.StatusServiceUnavailable)
 		return
 	}
-	defer clientConn.Close()
 
 	// Отправляем клиенту сообщение о том, что соединение установлено
 	_, err = clientConn.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
@@ -82,8 +82,7 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 		log.Println("Failed to connect to destination:", err)
 		return
 	}
-	defer serverConn.Close()
-
+	//defer serverConn.Close()
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128)) // Генерация случайного серийного номера
 	if err != nil {
 		fmt.Printf("Error generating serial number: %v\n", err)
@@ -101,12 +100,23 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	certFile := fmt.Sprintf("certs/%s.crt", host)
 	certKey := fmt.Sprintf("certs/%s.key", host)
 
+	// Проверяем, существуют ли файлы сертификата и ключа
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		log.Printf("Certificate file %s does not exist", certFile)
+		return
+	}
+	if _, err := os.Stat(certKey); os.IsNotExist(err) {
+		log.Printf("Key file %s does not exist", certKey)
+		return
+	}
+
 	// Загружаем сертификат и ключ
 	cert, err := tls.LoadX509KeyPair(certFile, certKey)
 	if err != nil {
-		log.Println("Failed to load certificate:", err)
+		log.Printf("Failed to load certificate from %s and key from %s: %v", certFile, certKey, err)
 		return
 	}
+	log.Printf("Successfully loaded certificate from %s and key from %s", certFile, certKey)
 
 	// Создаем TLS-конфигурацию для соединения с клиентом
 	tlsConfig := &tls.Config{
@@ -129,11 +139,13 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 		log.Println("TLS handshake with server failed:", err)
 		return
 	}
-	defer tlsServerConn.Close()
 
 	// Проксирование данных между клиентом и сервером
 	go io.Copy(tlsServerConn, tlsClientConn)
 	io.Copy(tlsClientConn, tlsServerConn)
+
+	//defer clientConn.Close()
+	//defer tlsServerConn.Close()
 }
 
 // Обработка HTTP-запросов
