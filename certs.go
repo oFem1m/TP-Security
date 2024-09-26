@@ -7,133 +7,85 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
-	"log"
 	"math/big"
 	"os"
 	"time"
 )
 
-// Генерация корневого сертификата (CA)
-func createCACertificate() error {
-	// Генерация приватного ключа для CA
-	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+func generateHostCertificate(hostname string, serialNumber *big.Int) error {
+	// Загрузка корневого сертификата (CA)
+	caCertPEM, err := os.ReadFile("certs/ca.crt")
 	if err != nil {
-		return err
+		return fmt.Errorf("error reading CA certificate: %v", err)
 	}
-
-	// Шаблон сертификата для CA
-	caCertTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			Organization:  []string{"Aleksandr Volokhov"},
-			Country:       []string{"RU"},
-			Province:      []string{""},
-			Locality:      []string{"Moscow"},
-			StreetAddress: []string{""},
-			PostalCode:    []string{""},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour), // срок действия 10 лет
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-	}
-
-	// Подписываем сертификат самого себя
-	caCertBytes, err := x509.CreateCertificate(rand.Reader, caCertTemplate, caCertTemplate, &caKey.PublicKey, caKey)
+	caKeyPEM, err := os.ReadFile("certs/ca.key")
 	if err != nil {
-		return err
+		return fmt.Errorf("error reading CA key: %v", err)
 	}
 
-	// Создаем директорию для хранения сертификатов
-	os.MkdirAll("certs", 0755)
+	// Парсинг CA сертификата и ключа
+	caCertBlock, _ := pem.Decode(caCertPEM)
+	caKeyBlock, _ := pem.Decode(caKeyPEM)
 
-	// Сохраняем корневой сертификат (CA)
-	certOut, err := os.Create("certs/ca.crt")
-	if err != nil {
-		return err
-	}
-	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: caCertBytes})
-	certOut.Close()
-
-	// Сохраняем приватный ключ CA
-	keyOut, err := os.Create("certs/ca.key")
-	if err != nil {
-		return err
-	}
-	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(caKey)})
-	keyOut.Close()
-
-	log.Println("CA certificate and key generated successfully!")
-	return nil
-}
-
-// Генерация сертификата для конкретного хоста, подписанного CA
-func generateHostCertificate(host string) (certFile, keyFile string, err error) {
-	// Загрузка приватного ключа CA
-	caKeyBytes, err := os.ReadFile("certs/ca.key")
-	if err != nil {
-		return "", "", err
-	}
-	caKeyBlock, _ := pem.Decode(caKeyBytes)
-	caKey, err := x509.ParsePKCS1PrivateKey(caKeyBlock.Bytes)
-	if err != nil {
-		return "", "", err
-	}
-
-	// Загрузка сертификата CA
-	caCertBytes, err := os.ReadFile("certs/ca.crt")
-	if err != nil {
-		return "", "", err
-	}
-	caCertBlock, _ := pem.Decode(caCertBytes)
 	caCert, err := x509.ParseCertificate(caCertBlock.Bytes)
 	if err != nil {
-		return "", "", err
+		return fmt.Errorf("error parsing CA certificate: %v", err)
+	}
+
+	caKey, err := x509.ParsePKCS8PrivateKey(caKeyBlock.Bytes)
+	if err != nil {
+		return fmt.Errorf("error parsing CA private key: %v", err)
 	}
 
 	// Генерация приватного ключа для хоста
-	hostKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	hostPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return "", "", err
+		return fmt.Errorf("error generating private key for host: %v", err)
 	}
 
-	// Шаблон сертификата для хоста
+	// Создание шаблона сертификата для хоста
 	hostCertTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			CommonName: host,
+			CommonName: hostname,
 		},
-		DNSNames:    []string{host},
-		NotBefore:   time.Now(),
-		NotAfter:    time.Now().Add(365 * 24 * time.Hour), // Срок действия 1 год
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().AddDate(1, 0, 0), // Срок действия: 1 год
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
 	}
 
-	// Подписываем сертификат хоста с помощью CA
-	hostCertBytes, err := x509.CreateCertificate(rand.Reader, hostCertTemplate, caCert, &hostKey.PublicKey, caKey)
+	// Подписываем сертификат корневым сертификатом (CA)
+	hostCertBytes, err := x509.CreateCertificate(rand.Reader, hostCertTemplate, caCert, &hostPrivKey.PublicKey, caKey)
 	if err != nil {
-		return "", "", err
+		return fmt.Errorf("error creating host certificate: %v", err)
 	}
 
-	// Сохраняем сертификат и ключ хоста в файлы
-	certFile = fmt.Sprintf("certs/%s.crt", host)
-	keyFile = fmt.Sprintf("certs/%s.key", host)
-
-	certOut, err := os.Create(certFile)
+	// Сохраняем приватный ключ хоста в файл host.key
+	hostKeyFile, err := os.Create(fmt.Sprintf("certs/%s.key", hostname))
 	if err != nil {
-		return "", "", err
+		return fmt.Errorf("error creating host key file: %v", err)
 	}
-	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: hostCertBytes})
-	certOut.Close()
+	defer hostKeyFile.Close()
 
-	keyOut, err := os.Create(keyFile)
+	err = pem.Encode(hostKeyFile, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(hostPrivKey)})
 	if err != nil {
-		return "", "", err
+		return fmt.Errorf("error writing host private key to file: %v", err)
 	}
-	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(hostKey)})
-	keyOut.Close()
 
-	return certFile, keyFile, nil
+	// Сохраняем сертификат хоста в файл host.crt
+	hostCertFile, err := os.Create(fmt.Sprintf("certs/%s.crt", hostname))
+	if err != nil {
+		return fmt.Errorf("error creating host certificate file: %v", err)
+	}
+	defer hostCertFile.Close()
+
+	err = pem.Encode(hostCertFile, &pem.Block{Type: "CERTIFICATE", Bytes: hostCertBytes})
+	if err != nil {
+		return fmt.Errorf("error writing host certificate to file: %v", err)
+	}
+
+	fmt.Printf("Host certificate and key generated for %s and saved to %s.crt and %s.key\n", hostname, hostname, hostname)
+	return nil
 }

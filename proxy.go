@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -46,14 +48,14 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	requests = append(requests, r)
 	mutex.Unlock()
 
-	// Извлекаем хост и порт из запроса CONNECT
-	host := r.Host
-	if !strings.Contains(host, ":") {
-		host += ":443"
+	// Читаем хост и порт из первой строки запроса
+	hostPort := r.Host
+	if !strings.Contains(hostPort, ":") {
+		hostPort += ":443" // Добавляем порт по умолчанию
 	}
+	host, _, err := net.SplitHostPort(hostPort)
 
-	// Сообщаем клиенту, что соединение установлено
-	w.WriteHeader(http.StatusOK)
+	// Устанавливаем соединение с клиентом
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
@@ -67,70 +69,71 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clientConn.Close()
 
-	// Генерируем сертификат для запрашиваемого хоста
-	certFile, keyFile, err := generateHostCertificate(r.Host)
+	// Отправляем клиенту сообщение о том, что соединение установлено
+	_, err = clientConn.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
 	if err != nil {
-		http.Error(w, "Failed to generate certificate", http.StatusInternalServerError)
+		log.Println("Failed to send connection established:", err)
 		return
 	}
 
-	// Загрузка сертификата и ключа
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		http.Error(w, "Failed to load certificate", http.StatusInternalServerError)
-		return
-	}
-
-	// Создаем TLS-сервер с нашим сгенерированным сертификатом
-	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
-	tlsConn := tls.Server(clientConn, tlsConfig)
-
-	// Устанавливаем TLS-соединение с клиентом
-	err = tlsConn.Handshake()
-	if err != nil {
-		log.Println("TLS Handshake error:", err)
-		return
-	}
-	defer tlsConn.Close()
-
-	// Читаем запрос клиента
-	req, err := http.ReadRequest(bufio.NewReader(tlsConn))
-	if err != nil {
-		log.Println("Failed to read request:", err)
-		return
-	}
-
-	// Модифицируем запрос перед отправкой на целевой сервер (пример)
-	req.Header.Set("User-Agent", "Modified-MITM-Proxy")
-
-	// Пересылаем измененный запрос на целевой сервер
-	destConn, err := tls.Dial("tcp", host, &tls.Config{InsecureSkipVerify: true})
+	// Устанавливаем соединение с целевым сервером
+	serverConn, err := net.Dial("tcp", hostPort)
 	if err != nil {
 		log.Println("Failed to connect to destination:", err)
 		return
 	}
-	defer destConn.Close()
+	defer serverConn.Close()
 
-	err = req.Write(destConn)
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128)) // Генерация случайного серийного номера
 	if err != nil {
-		log.Println("Failed to forward request:", err)
+		fmt.Printf("Error generating serial number: %v\n", err)
 		return
 	}
 
-	// Читаем ответ от сервера
-	resp, err := http.ReadResponse(bufio.NewReader(destConn), req)
+	// Генерируем и загружаем сертификат для хоста
+	log.Println("Хост перед генерации сертификата хоста:", host)
+	err = generateHostCertificate(host, serialNumber)
 	if err != nil {
-		log.Println("Failed to read response from destination:", err)
+		log.Println("Failed to generate host certificate:", err)
 		return
 	}
-	defer resp.Body.Close()
 
-	// Пересылаем ответ клиенту
-	err = resp.Write(tlsConn)
+	certFile := fmt.Sprintf("%s.crt", host)
+	certKey := fmt.Sprintf("%s.key", host)
+
+	// Загружаем сертификат и ключ
+	cert, err := tls.LoadX509KeyPair(certFile, certKey)
 	if err != nil {
-		log.Println("Failed to write response to client:", err)
+		log.Println("Failed to load certificate:", err)
 		return
 	}
+
+	// Создаем TLS-конфигурацию для соединения с клиентом
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
+
+	// Устанавливаем TLS-соединение с клиентом
+	tlsClientConn := tls.Server(clientConn, tlsConfig)
+	err = tlsClientConn.Handshake()
+	if err != nil {
+		log.Println("TLS handshake with client failed:", err)
+		return
+	}
+	defer tlsClientConn.Close()
+
+	// Устанавливаем TLS-соединение с целевым сервером
+	tlsServerConn := tls.Client(serverConn, &tls.Config{InsecureSkipVerify: true})
+	err = tlsServerConn.Handshake()
+	if err != nil {
+		log.Println("TLS handshake with server failed:", err)
+		return
+	}
+	defer tlsServerConn.Close()
+
+	// Проксирование данных между клиентом и сервером
+	go io.Copy(tlsServerConn, tlsClientConn)
+	io.Copy(tlsClientConn, tlsServerConn)
 }
 
 // Обработка HTTP-запросов
