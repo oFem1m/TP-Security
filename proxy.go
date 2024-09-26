@@ -98,8 +98,8 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	certFile := fmt.Sprintf("%s.crt", host)
-	certKey := fmt.Sprintf("%s.key", host)
+	certFile := fmt.Sprintf("certs/%s.crt", host)
+	certKey := fmt.Sprintf("certs/%s.key", host)
 
 	// Загружаем сертификат и ключ
 	cert, err := tls.LoadX509KeyPair(certFile, certKey)
@@ -139,7 +139,7 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 // Обработка HTTP-запросов
 func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Логируем запрос
-	log.Printf("Handling HTTPS request: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
+	log.Printf("Handling HTTP request: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
 	mutex.Lock()
 	requests = append(requests, r)
 	mutex.Unlock()
