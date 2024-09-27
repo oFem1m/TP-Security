@@ -14,7 +14,7 @@ func createApiServer() {
 		Addr:    ":8000",
 		Handler: http.HandlerFunc(handleAPI),
 	}
-	fmt.Println("API-Сервер запущен на порту 8080")
+	fmt.Println("API-Сервер запущен на порту 8000")
 	err := ApiServer.ListenAndServe()
 	if err != nil {
 		fmt.Println(err)
@@ -31,6 +31,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Получение всех запросов из базы данных
 func handleRequests(w http.ResponseWriter, r *http.Request) {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -43,11 +44,14 @@ func handleRequests(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Возвращаем результат в формате JSON
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(requestList)
 }
 
+// Получение одного запроса по его ID
 func handleRequestByID(w http.ResponseWriter, r *http.Request) {
+	// Извлекаем ID из URL
 	idStr := strings.TrimPrefix(r.URL.Path, "/requests/")
 	id, err := strconv.Atoi(idStr)
 	if err != nil || id < 0 || id >= len(requests) {
