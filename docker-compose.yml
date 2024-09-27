@@ -10,4 +10,18 @@ services:
       - ./certs:/app/certs # Монтируем локальную папку с сертификатами
     environment:
       - TZ=UTC
+      - MONGO_URI=mongodb://mongo:27017 # Добавляем переменную окружения с адресом MongoDB
+    depends_on:
+      - mongo # Указываем, что этот сервис зависит от mongo
     restart: always
+
+  mongo:
+    image: mongo:latest
+    ports:
+      - "27017:27017" # Порт для доступа к MongoDB
+    volumes:
+      - mongo-data:/data/db # Персистентное хранилище данных для MongoDB
+    restart: always
+
+volumes:
+  mongo-data:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 	"log"
 	"net/http"
 	"strconv"
@@ -40,15 +41,26 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 
 // Получение всех запросов из базы данных
 func handleRequests(w http.ResponseWriter, r *http.Request) {
-	mutex.Lock()
-	defer mutex.Unlock()
+	ctx := context.TODO()
+	cursor, err := collection.Find(ctx, bson.M{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer cursor.Close(ctx)
 
-	requestList := make([]map[string]string, len(requests))
-	for i, req := range requests {
-		requestList[i] = map[string]string{
-			"Method": req.Method,
-			"URL":    req.URL.String(),
+	var requestList []map[string]string
+	for cursor.Next(ctx) {
+		var request map[string]interface{}
+		if err = cursor.Decode(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
+
+		requestList = append(requestList, map[string]string{
+			"Method": request["Method"].(string),
+			"URL":    request["URL"].(string),
+		})
 	}
 
 	// Возвращаем результат в формате JSON
@@ -61,19 +73,28 @@ func handleRequestByID(w http.ResponseWriter, r *http.Request) {
 	// Извлекаем ID из URL
 	idStr := strings.TrimPrefix(r.URL.Path, "/requests/")
 	id, err := strconv.Atoi(idStr)
-	if err != nil || id < 0 || id >= len(requests) {
+	if err != nil {
 		http.Error(w, "Invalid ID", http.StatusBadRequest)
 		return
 	}
 
-	mutex.Lock()
-	defer mutex.Unlock()
+	ctx := context.TODO()
+	var request bson.M
+	filter := bson.M{"_id": id}
+	err = collection.FindOne(ctx, filter).Decode(&request)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			http.Error(w, "Request not found", http.StatusNotFound)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
 
-	req := requests[id]
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"Method": req.Method,
-		"URL":    req.URL.String(),
+		"Method": request["Method"].(string),
+		"URL":    request["URL"].(string),
 	})
 }
 

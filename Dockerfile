@@ -2,7 +2,7 @@
 FROM golang:1.21-alpine
 
 # 2. Устанавливаем нужные утилиты и зависимости
-RUN apk add --no-cache bash ca-certificates git
+RUN apk add --no-cache bash ca-certificates git mongodb-tools
 
 # 3. Создаем рабочую директорию в контейнере
 WORKDIR /app
