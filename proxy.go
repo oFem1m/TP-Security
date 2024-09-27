@@ -24,7 +24,7 @@ func createServer() {
 		Addr:    ":8080",
 		Handler: http.HandlerFunc(handleProxy),
 	}
-	fmt.Println("Сервер запущен и слушает на порту 8080")
+	fmt.Println("Proxy-Сервер запущен на порту 8080")
 	err := server.ListenAndServe()
 	if err != nil {
 		fmt.Println(err)
@@ -32,7 +32,7 @@ func createServer() {
 }
 
 func handleProxy(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Received request method: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
+	log.Printf("(proxy-server) Received request method: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
 	// Определяем, является ли запрос CONNECT (для HTTPS)
 	if r.Method == http.MethodConnect {
 		handleHTTPS(w, r) // Вызов функции для обработки HTTPS-запросов
@@ -43,7 +43,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 // Обработка HTTPS-запросов
 func handleHTTPS(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Handling HTTPS request: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
+	log.Printf("(proxy-server) Handling HTTPS request: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
 	// Логируем запрос
 	mutex.Lock()
 	requests = append(requests, r)
@@ -73,14 +73,14 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	// Отправляем клиенту сообщение о том, что соединение установлено
 	_, err = clientConn.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
 	if err != nil {
-		log.Println("Failed to send connection established:", err)
+		log.Println("(proxy-server) Failed to send connection established:", err)
 		return
 	}
 
 	// Устанавливаем соединение с целевым сервером
 	serverConn, err := net.Dial("tcp", hostPort)
 	if err != nil {
-		log.Println("Failed to connect to destination:", err)
+		log.Println("(proxy-server) Failed to connect to destination:", err)
 		return
 	}
 	defer serverConn.Close()
@@ -88,7 +88,7 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	// Генерация серийного номера для сертификата
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		fmt.Printf("Error generating serial number: %v\n", err)
+		log.Printf("(proxy-server) Error generating serial number: %v\n", err)
 		return
 	}
 
@@ -97,12 +97,12 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 
 	// Проверка существования файлов сертификата
 	if _, err := os.Stat(certFile); os.IsNotExist(err) {
-		log.Printf("Certificate file %s does not exist", certFile)
+		log.Printf("(proxy-server) Certificate file %s does not exist", certFile)
 		// Генерация сертификата для хоста
-		log.Println("Generating host certificate:", host)
+		log.Println("(proxy-server) Generating host certificate:", host)
 		err = generateHostCertificate(host, serialNumber)
 		if err != nil {
-			log.Println("Failed to generate host certificate:", err)
+			log.Println("(proxy-server) Failed to generate host certificate:", err)
 			return
 		}
 	}
@@ -110,10 +110,10 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	// Загружаем сертификат и ключ
 	cert, err := tls.LoadX509KeyPair(certFile, certKey)
 	if err != nil {
-		log.Printf("Failed to load certificate from %s and key from %s: %v", certFile, certKey, err)
+		log.Printf("(proxy-server) Failed to load certificate from %s and key from %s: %v", certFile, certKey, err)
 		return
 	}
-	log.Printf("Successfully loaded certificate from %s and key from %s", certFile, certKey)
+	log.Printf("(proxy-server) Successfully loaded certificate from %s and key from %s", certFile, certKey)
 
 	// Создаем TLS-конфигурацию для соединения с клиентом
 	tlsConfig := &tls.Config{
@@ -124,7 +124,7 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	tlsClientConn := tls.Server(clientConn, tlsConfig)
 	err = tlsClientConn.Handshake()
 	if err != nil {
-		log.Println("TLS handshake with client failed:", err)
+		log.Println("(proxy-server) TLS handshake with client failed:", err)
 		return
 	}
 	defer tlsClientConn.Close()
@@ -133,7 +133,7 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	tlsServerConn := tls.Client(serverConn, &tls.Config{InsecureSkipVerify: true})
 	err = tlsServerConn.Handshake()
 	if err != nil {
-		log.Println("TLS handshake with server failed:", err)
+		log.Println("(proxy-server) TLS handshake with server failed:", err)
 		return
 	}
 	defer tlsServerConn.Close()
@@ -146,7 +146,7 @@ func handleHTTPS(w http.ResponseWriter, r *http.Request) {
 // Обработка HTTP-запросов
 func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Логируем запрос
-	log.Printf("Handling HTTP request: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
+	log.Printf("(proxy-server) Handling HTTP request: %s, host: %s, URL: %s", r.Method, r.Host, r.URL.String())
 	mutex.Lock()
 	requests = append(requests, r)
 	mutex.Unlock()
