@@ -1,7 +1,13 @@
-version: '3'
+version: "3.8"
+
 services:
-  proxy-server:
+  proxyserver:
     build: .
     ports:
-      - "8080:8080"
-      - "8000:8000"
+      - "8080:8080" # Прокси-сервер (HTTP)
+      - "8000:8000" # API-сервер
+    volumes:
+      - ./certs:/app/certs # Монтируем локальную папку с сертификатами
+    environment:
+      - TZ=UTC
+    restart: always
