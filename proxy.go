@@ -218,3 +218,128 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
+
+// Сохранение запроса в базу данных
+func saveRequest(req *http.Request, parsedBody map[string]interface{}) (int64, error) {
+	// Парсинг заголовков, Cookie, GET/POST параметров
+	headers := parseHeaders(req.Header)
+	cookies := parseCookies(req.Cookies())
+	getParams := parseGetParams(req.URL.Query())
+	postParams := parsedBody
+
+	// Сохранение запроса в БД
+	var requestID int64
+	err := db.QueryRow(`
+		INSERT INTO requests (method, path, get_params, headers, cookies, post_params, body)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+	`,
+		req.Method,
+		req.URL.Path,
+		getParams,
+		headers,
+		cookies,
+		postParams,
+		req.Body,
+	).Scan(&requestID)
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to save request: %v", err)
+	}
+	return requestID, nil
+}
+
+// Сохранение ответа в базу данных
+func saveResponse(requestID int64, resp *http.Response) error {
+	headers := parseHeaders(resp.Header)
+
+	_, err := db.Exec(`
+		INSERT INTO responses (request_id, status_code, status_message, headers, body)
+		VALUES ($1, $2, $3, $4, $5)
+	`,
+		requestID,
+		resp.StatusCode,
+		resp.Status,
+		headers,
+		resp.Body,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to save response: %v", err)
+	}
+	return nil
+}
+
+func parseHeaders(headers http.Header) map[string]string {
+	parsedHeaders := make(map[string]string)
+	for key, values := range headers {
+		parsedHeaders[key] = strings.Join(values, ", ")
+	}
+	return parsedHeaders
+}
+
+func parseCookies(cookies []*http.Cookie) map[string]string {
+	parsedCookies := make(map[string]string)
+	for _, cookie := range cookies {
+		parsedCookies[cookie.Name] = cookie.Value
+	}
+	return parsedCookies
+}
+
+func parseGetParams(params url.Values) map[string]interface{} {
+	parsedParams := make(map[string]interface{})
+	for key, values := range params {
+		if len(values) == 1 {
+			parsedParams[key] = values[0]
+		} else {
+			parsedParams[key] = values
+		}
+	}
+	return parsedParams
+}
+
+func resendRequest(requestID int64) error {
+	// Получаем запрос из БД
+	var reqData struct {
+		Method  string
+		Path    string
+		Headers map[string]string
+		Body    string
+	}
+
+	err := db.QueryRow(`SELECT method, path, headers, body FROM requests WHERE id = $1`, requestID).Scan(
+		&reqData.Method,
+		&reqData.Path,
+		&reqData.Headers,
+		&reqData.Body,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve request: %v", err)
+	}
+
+	// Создаем HTTP-запрос для повторной отправки
+	req, err := http.NewRequest(reqData.Method, reqData.Path, strings.NewReader(reqData.Body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// Устанавливаем заголовки
+	for key, value := range reqData.Headers {
+		req.Header.Set(key, value)
+	}
+
+	// Отправляем запрос
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to resend request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Сохраняем новый ответ
+	err = saveResponse(requestID, resp)
+	if err != nil {
+		return fmt.Errorf("failed to save response: %v", err)
+	}
+
+	return nil
+}
