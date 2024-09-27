@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/mux"
+	"go.mongodb.org/mongo-driver/bson"
 	"log"
 	"net/http"
 	"strconv"
@@ -28,7 +31,11 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		handleRequests(w, r)
 	case "/requests/":
 		handleRequestByID(w, r)
+	case "/repeat/":
+		handleRepeatRequest(w, r)
+
 	}
+
 }
 
 // Получение всех запросов из базы данных
@@ -68,4 +75,34 @@ func handleRequestByID(w http.ResponseWriter, r *http.Request) {
 		"Method": req.Method,
 		"URL":    req.URL.String(),
 	})
+}
+
+// Повторная отправка запроса
+func handleRepeatRequest(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	idStr := vars["id"]
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "Неверный ID", http.StatusBadRequest)
+		return
+	}
+
+	collection := db.Collection("requests")
+	var storedReq StoredRequest
+	err = collection.FindOne(context.TODO(), bson.M{"_id": id}).Decode(&storedReq)
+	if err != nil {
+		http.Error(w, "Запрос не найден", http.StatusNotFound)
+		return
+	}
+
+	// Отправляем запрос повторно
+	resp, err := repeatRequest(storedReq.Request)
+	if err != nil {
+		http.Error(w, "Ошибка при повторной отправке запроса", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
