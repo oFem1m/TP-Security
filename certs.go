@@ -15,11 +15,11 @@ import (
 
 func generateHostCertificate(hostname string, serialNumber *big.Int) error {
 	// Загрузка корневого сертификата (CA)
-	caCertPEM, err := os.ReadFile("certs/ca.crt")
+	caCertPEM, err := os.ReadFile("certs/ca_proxy.crt")
 	if err != nil {
 		return fmt.Errorf("error reading CA certificate: %v", err)
 	}
-	caKeyPEM, err := os.ReadFile("certs/ca.key")
+	caKeyPEM, err := os.ReadFile("certs/ca_proxy.key")
 	if err != nil {
 		return fmt.Errorf("error reading CA key: %v", err)
 	}
